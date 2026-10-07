@@ -235,3 +235,16 @@ php artisan route:list --path=api
 - Validation failure: expect `422` JSON with an `errors` object.
 
 The current public resource routes will continue to return controller responses without a token until `auth:sanctum` is added to them.
+
+## Common pitfalls & troubleshooting
+
+### Why is the password hash always different?
+- **Bcrypt salting**: Running `Hash::make('password')` generates a unique random salt each time, so the resulting hash string is never identical. Never compare hashes with `===`; always use `Hash::check($plainPassword, $hashedPassword)`.
+- **Double-hashing trap**: In `App\Models\User`, `casts()` defines `'password' => 'hashed'`. If you call `Hash::make()` before passing the password to `User::create()` or updating the model, Eloquent hashes the string a second time. `Hash::check()` will then fail during login. Pass plain text to Eloquent model methods so it is hashed only once.
+
+### Why does login fail?
+1. **`404 Not Found`**: Ensure `Route::post('/login', [AuthController::class, 'login'])` is registered in `routes/api.php` outside the protected middleware group.
+2. **`Call to undefined method App\Models\User::createToken()`**: Ensure `use Laravel\Sanctum\HasApiTokens;` is present in `App\Models\User`.
+3. **`Table 'personal_access_tokens' doesn't exist`**: Run `php artisan migrate` to create the Sanctum table. See [FIX_PERSONAL_ACCESS_TOKENS_TABLE.md](./FIX_PERSONAL_ACCESS_TOKENS_TABLE.md) if the table was dropped.
+4. **`401 Invalid credentials`**: Check for password double-hashing or incorrect credentials.
+
