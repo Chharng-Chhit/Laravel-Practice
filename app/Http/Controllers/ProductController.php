@@ -41,9 +41,27 @@ class ProductController extends Controller
             'selling_price' => ['required', 'numeric', 'min:0'],
             'stock_quantity' => ['sometimes', 'integer', 'min:0'],
             'status' => ['sometimes', 'string', 'max:255'],
+            'image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
 
-        return response()->json(Product::create($validated), 201);
+        
+        $path = $request->file('image')->store('images', 'public');
+        if ($path === false) {
+            return response()->json(['message' => 'Upload failed'], 500);
+        }
+
+        $product = Product::create([
+            'category_id'   => $validated['category_id'],
+            'name'          => $validated['name'],
+            'barcode'       => $validated['barcode'],
+            'sku'           => $validated['sku'],
+            'cost_price'    => $validated['cost_price'],
+            'selling_price' => $validated['selling_price'],
+            'stock_quantity'=> $validated['stock_quantity'],
+            'path'          => $path,
+        ]); 
+
+        return response()->json($product, 201);
     }
 
     public function show(string $id): Product
