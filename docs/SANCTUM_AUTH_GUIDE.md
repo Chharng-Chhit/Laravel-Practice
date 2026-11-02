@@ -250,3 +250,95 @@ test('unauthenticated request receives 401', function () {
         ->assertUnauthorized(); // 401
 });
 ```
+
+---
+
+## Step 7: Password Hashing Explained & Why Hashes Differ
+
+When working with user authentication and passwords in Laravel, you will encounter two very common points of confusion:
+
+### 1. Why `Hash::make()` Outputs a Different String Every Time
+If you run `Hash::make('password')` in Tinker multiple times, you will notice the output is completely different every time:
+```text
+$2y$12$eX4mP1Eabc... (first run)
+$2y$12$k9LmN2Oxyz... (second run)
+```
+
+**Why this happens:**
+* Laravel uses the **Bcrypt** (or Argon2) hashing algorithm.
+* Bcrypt generates a **fresh, random cryptographic salt** on every execution.
+* The salt is intentionally embedded into the output hash. This prevents attackers from using pre-computed rainbow tables to reverse passwords.
+
+**The Golden Rule: Never compare hashes directly with `===` or `==`:**
+```php
+// ❌ WRONG: This will NEVER match and will always fail!
+if ($user->password === Hash::make($request->password)) {
+    // Will never execute
+}
+
+// ✅ CORRECT: Always use Hash::check()
+if (Hash::check($request->password, $user->password)) {
+    // Hash::check extracts the salt from the stored hash and compares securely
+}
+```
+
+---
+
+### 2. The Double-Hashing Trap (`'password' => 'hashed'`)
+In Laravel 10+, the `User` model includes the `hashed` attribute cast by default:
+
+```php
+// app/Models/User.php
+protected function casts(): array
+{
+    return [
+        'password' => 'hashed', // Automatically hashes any value assigned!
+    ];
+}
+```
+
+#### What Goes Wrong:
+If you manually call `Hash::make()` when creating a user, Laravel hashes the string **twice**:
+```php
+// ❌ BUG: Double-hashes the password!
+User::create([
+    'name' => 'Cashier',
+    'email' => 'cashier@example.com',
+    'password' => Hash::make('secret123'), // Cast will hash this ALREADY-HASHED string again!
+]);
+```
+The database stores `Hash::make(Hash::make('secret123'))`.
+
+When the user attempts to log in with `'secret123'`:
+```php
+Hash::check('secret123', $user->password); // Checks 'secret123' against the double-hash -> FAILS!
+```
+
+#### The Fix:
+* When using the `'password' => 'hashed'` cast, pass the **plain-text** password string directly:
+  ```php
+  // ✅ CORRECT: Eloquent automatically hashes it once
+  User::create([
+      'name' => 'Cashier',
+      'email' => 'cashier@example.com',
+      'password' => 'secret123',
+  ]);
+  ```
+* **Exception (Database Seeders with `upsert` or raw `DB::table`)**:
+  Raw queries like `DB::table('users')->insert(...)` or `User::upsert(...)` bypass Eloquent casts. In those specific cases, you **must** use `Hash::make('secret123')` manually.
+
+---
+
+## Step 8: Troubleshooting: Why Login Fails
+
+If login is not working, check the following checklist of common issues:
+
+| Issue / Error | Root Cause | Solution |
+| :--- | :--- | :--- |
+| **`404 Not Found`** on `POST /api/login` | Route is missing in `routes/api.php` | Add `Route::post('/login', [AuthController::class, 'login']);` outside the `auth:sanctum` middleware group. |
+| **`Call to undefined method App\Models\User::createToken()`** | `User` model does not import Sanctum's trait | Add `use Laravel\Sanctum\HasApiTokens;` and include `use HasApiTokens;` in `app/Models/User.php`. |
+| **`Base table or view not found: Table 'personal_access_tokens' doesn't exist`** | Sanctum migration has not been run | Run `php artisan migrate`. (See [FIX_PERSONAL_ACCESS_TOKENS_TABLE.md](./FIX_PERSONAL_ACCESS_TOKENS_TABLE.md) if the table was dropped). |
+| **`401 Invalid email or password`** | Double-hashing or incorrect password verification | 1. Ensure you use `Hash::check($input, $user->password)`.<br>2. Check if the user password was double-hashed during registration/seeding. Reset with `php artisan tinker --execute "App\Models\User::first()->update(['password' => 'password']);"` |
+| **`403 Account inactive`** | User account status check | Verify the user record has `status = 'active'` in the database. |
+| **`401 Unauthenticated`** on protected routes | Client didn't send token header | Ensure the client passes the header: `Authorization: Bearer <token>` and `Accept: application/json`. |
+
